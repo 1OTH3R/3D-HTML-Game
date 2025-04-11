@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Procedural Parkour Game with FP Toggle</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <!-- Load Three.js, OrbitControls, and Cannon.js from unpkg (UMD versions) -->
+  <script src="https://unpkg.com/three@0.146.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.146.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://unpkg.com/cannon@0.6.2/build/cannon.min.js"></script>
+  
+  <script>
+    if (typeof THREE === "undefined") {
+      throw new Error("THREE.js failed to load.");
+    }
+
+    // -------------------------------
+    // Basic Three.js Setup: Scene, Camera, Renderer 
+    // -------------------------------
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 2000);
+    camera.position.set(0, 3, -6);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    // Enable shadows.
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    // -------------------------------
+    // OrbitControls Setup (for third-person mode) 
+    // -------------------------------
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.1;
+    controls.enablePan = false;
+    controls.minDistance = 6;
+    controls.maxDistance = 10;
+
+    // -------------------------------
+    // Lighting Setup
+    // -------------------------------
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+    hemiLight.position.set(0, 50, 0);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    dirLight.position.set(50, 100, 50);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 4096;
+    dirLight.shadow.mapSize.height = 4096;
+    dirLight.shadow.camera.near = 0.1;
+    dirLight.shadow.camera.far = 1000;
+    dirLight.shadow.camera.left = -200;
+    dirLight.shadow.camera.right = 200;
+    dirLight.shadow.camera.top = 200;
+    dirLight.shadow.camera.bottom = -200;
+    scene.add(dirLight);
+
+    // -------------------------------
+    // Cannon.js Physics World Setup 
+    // -------------------------------
+    const world = new CANNON.World();
+    world.gravity.set(0, -9.82, 0);
+    world.broadphase = new CANNON.NaiveBroadphase();
+    world.solver.iterations = 10;
+
+    // -------------------------------
+    // Ground Setup
+    // -------------------------------
+    const groundMat = new CANNON.Material();
+    const groundBody = new CANNON.Body({
+      mass: 0,
+      shape: new CANNON.Plane(),
+      material: groundMat
+    });
+    groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    world.addBody(groundBody);
+
+    const groundGeo = new THREE.PlaneGeometry(200, 200);
+    const groundMaterialMesh = new THREE.MeshPhongMaterial({ color: 0x999999 });
+    const groundMesh = new THREE.Mesh(groundGeo, groundMaterialMesh);
+    groundMesh.rotation.x = -Math.PI / 2;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+
+    // -------------------------------
+    // Player Setup 
+    // -------------------------------
+    const playerGeo = new THREE.BoxGeometry(1, 2, 1);
+    const playerMat = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
+    const playerMesh = new THREE.Mesh(playerGeo, playerMat);
+    playerMesh.castShadow = true;
+    scene.add(playerMesh);
+
+    const playerBody = new CANNON.Body({
+      mass: 1,
+      shape: new CANNON.Box(new CANNON.Vec3(0.5, 1, 0.5)),
+      position: new CANNON.Vec3(0, 3, 0)
+    });
+    world.addBody(playerBody);
+
+    let canJump = false;
+    playerBody.addEventListener("collide", (e) => {
+      if (e.body.mass === 0) {  // static objects (ground, platforms)
+        canJump = true;
+      }
+    });
+
+    // -------------------------------
+    // Initial Platforms & Procedural Generation Setup 
+    // -------------------------------
+    const initialPlatforms = [
+      { x: 0, y: 0.5, z: 0, w: 10, h: 1, d: 10, c: 0xAAAAAA },
+      { x: 0, y: 2, z: -12, w: 4, h: 0.5, d: 4, c: 0x44aa44 },
+      { x: 5, y: 4, z: -24, w: 6, h: 0.5, d: 4, c: 0x4444aa },
+      { x: -5, y: 6, z: -36, w: 2, h: 0.5, d: 8, c: 0xaa4444 },
+      { x: 0, y: 8, z: -48, w: 5, h: 0.5, d: 5, c: 0x88aa00 },
+      { x: 0, y: 9, z: -60, w: 8, h: 1, d: 8, c: 0x00aaff }
+    ];
+    let highestPlatformY = 9;
+
+    function createPlatform(options) {
+      const { x, y, z, w, h, d, c } = options;
+      // Three.js mesh
+      const geo = new THREE.BoxGeometry(w, h, d);
+      const mat = new THREE.MeshPhongMaterial({ color: c });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      // Cannon.js body (static)
+      const shape = new CANNON.Box(new CANNON.Vec3(w/2, h/2, d/2));
+      const body = new CANNON.Body({ mass: 0 });
+      body.addShape(shape);
+      body.position.set(x, y, z);
+      world.addBody(body);
+    }
+    initialPlatforms.forEach(p => createPlatform(p));
+
+    function generatePlatforms(count, baseY) {
+      let newHighest = baseY;
+      for (let i = 0; i < count; i++) {
+        const offsetY = Math.random() * 2 + 2;
+        const newY = newHighest + offsetY;
+        newHighest = newY;
+        const newX = (Math.random() - 0.5) * 10;
+        const newZ = - (newY * 1.5 + Math.random() * 10);
+        const w = Math.random() * 3 + 3;
+        const d = Math.random() * 3 + 3;
+        const h = 0.5;
+        const c = Math.floor(Math.random() * 0xffffff);
+        createPlatform({ x: newX, y: newY, z: newZ, w, h, d, c });
+      }
+      return newHighest;
+    }
+
+    // -------------------------------
+    // Camera-Relative Movement Input 
+    // -------------------------------
+    const keys = { w: false, a: false, s: false, d: false };
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "KeyW") keys.w = true;
+      if (e.code === "KeyA") keys.a = true;
+      if (e.code === "KeyS") keys.s = true;
+      if (e.code === "KeyD") keys.d = true;
+      if (e.code === "Space" && canJump) {
+        playerBody.velocity.y = 8;
+        canJump = false;
+      }
+      // Toggle first-person mode with the "V" key.
+      if (e.code === "KeyV") {
+        isFirstPerson = !isFirstPerson;
+        if (isFirstPerson) {
+          // Disable OrbitControls when in first-person mode.
+          controls.enabled = false;
+          console.log("First-person mode enabled");
+        } else {
+          controls.enabled = true;
+          console.log("Third-person mode enabled");
+        }
+      }
+    });
+    window.addEventListener("keyup", (e) => {
+      if (e.code === "KeyW") keys.w = false;
+      if (e.code === "KeyA") keys.a = false;
+      if (e.code === "KeyS") keys.s = false;
+      if (e.code === "KeyD") keys.d = false;
+    });
+
+    // -------------------------------
+    // First-Person Controls Setup
+    // -------------------------------
+    let isFirstPerson = false;
+    let fpYaw = 0, fpPitch = 0;
+    // When in first-person mode, use mouse movement to look around.
+    window.addEventListener("mousemove", (e) => {
+      if (!isFirstPerson) return;
+      const sensitivity = 0.002;
+      fpYaw   -= e.movementX * sensitivity;
+      fpPitch -= e.movementY * sensitivity;
+      // Clamp vertical look between -90 and +90 degrees.
+      fpPitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, fpPitch));
+    });
+
+    // -------------------------------
+    // Apply Movement (Camera-Relative)
+    // -------------------------------
+    function applyPlayerMovement() {
+      const force = 15;
+      const direction = new THREE.Vector3();
+      const right = new THREE.Vector3();
+      const camDir = new THREE.Vector3();
+      
+      // Get the camera's forward vector (ignoring vertical).
+      camera.getWorldDirection(camDir);
+      camDir.y = 0;
+      camDir.normalize();
+      
+      // Calculate the right vector.
+      right.crossVectors(camDir, camera.up).normalize();
+
+      if (keys.w) direction.add(camDir);
+      if (keys.s) direction.sub(camDir);
+      if (keys.a) direction.sub(right);
+      if (keys.d) direction.add(right);
+
+      direction.normalize();
+      if (direction.length() > 0) {
+        playerBody.velocity.x = direction.x * force;
+        playerBody.velocity.z = direction.z * force;
+      } else {
+        playerBody.velocity.x *= 0.9;
+        playerBody.velocity.z *= 0.9;
+      }
+    }
+
+    // -------------------------------
+    // Robust Animation Loop with Fixed Time Step 
+    // -------------------------------
+    let lastTime = performance.now() / 1000;
+    const fixedTimeStep = 1 / 60;
+    let accumulator = 0;
+
+    function animate(time) {
+      requestAnimationFrame(animate);
+      const currentTime = time / 1000;
+      let dt = currentTime - lastTime;
+      lastTime = currentTime;
+      dt = Math.min(dt, 0.1);
+      accumulator += dt;
+      while (accumulator >= fixedTimeStep) {
+        world.step(fixedTimeStep);
+        accumulator -= fixedTimeStep;
+      }
+
+      // Process camera-relative movement.
+      applyPlayerMovement();
+
+      // Sync player mesh to physics body.
+      playerMesh.position.copy(playerBody.position);
+      playerMesh.quaternion.copy(playerBody.quaternion);
+
+      if (isFirstPerson) {
+        // First-person mode: position the camera at the player's head.
+        const headOffset = new THREE.Vector3(0, 1.5, 0);
+        camera.position.copy(playerMesh.position).add(headOffset);
+        // Apply first-person look rotation.
+        camera.rotation.set(fpPitch, fpYaw, 0, "YXZ");
+      } else {
+        // Third-person mode: update OrbitControls to follow the player.
+        controls.target.copy(playerMesh.position);
+        controls.update();
+      }
+
+      // Procedurally generate new platforms if needed.
+      if (playerMesh.position.y >= highestPlatformY) {
+        highestPlatformY = generatePlatforms(6, highestPlatformY);
+      }
+
+      renderer.render(scene, camera);
+    }
+    requestAnimationFrame(animate);
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
