@@ -8,35 +8,26 @@
   </style>
 </head>
 <body>
-  <!-- Load Three.js, OrbitControls, and Cannon.js from unpkg (UMD versions) -->
   <script src="https://unpkg.com/three@0.146.0/build/three.min.js"></script>
   <script src="https://unpkg.com/three@0.146.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://unpkg.com/cannon@0.6.2/build/cannon.min.js"></script>
-  
+
   <script>
     if (typeof THREE === "undefined") {
       throw new Error("THREE.js failed to load.");
     }
 
-    // -------------------------------
-    // Basic Three.js Setup: Scene, Camera, Renderer 
-    // -------------------------------
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x87ceeb);
 
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 2000);
     camera.position.set(0, 3, -6);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    // Enable shadows.
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.appendChild(renderer.domElement);
 
-    // -------------------------------
-    // OrbitControls Setup (for third-person mode) 
-    // -------------------------------
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.1;
@@ -44,9 +35,6 @@
     controls.minDistance = 6;
     controls.maxDistance = 10;
 
-    // -------------------------------
-    // Lighting Setup
-    // -------------------------------
     const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
     hemiLight.position.set(0, 50, 0);
     scene.add(hemiLight);
@@ -64,17 +52,23 @@
     dirLight.shadow.camera.bottom = -200;
     scene.add(dirLight);
 
-    // -------------------------------
-    // Cannon.js Physics World Setup 
-    // -------------------------------
+    // ----- 🌌 Nebula Sky -----
+    const textureLoader = new THREE.TextureLoader();
+    textureLoader.load(
+      'https://i.ibb.co/kVwYjVmM/4f6f57e1-c7de-4e7e-b9b0-330bb56a96ab.png',
+      (texture) => {
+        const skyGeo = new THREE.SphereGeometry(1000, 64, 64);
+        const skyMat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.BackSide });
+        const sky = new THREE.Mesh(skyGeo, skyMat);
+        scene.add(sky);
+      }
+    );
+
     const world = new CANNON.World();
     world.gravity.set(0, -9.82, 0);
     world.broadphase = new CANNON.NaiveBroadphase();
     world.solver.iterations = 10;
 
-    // -------------------------------
-    // Ground Setup
-    // -------------------------------
     const groundMat = new CANNON.Material();
     const groundBody = new CANNON.Body({
       mass: 0,
@@ -91,9 +85,6 @@
     groundMesh.receiveShadow = true;
     scene.add(groundMesh);
 
-    // -------------------------------
-    // Player Setup 
-    // -------------------------------
     const playerGeo = new THREE.BoxGeometry(1, 2, 1);
     const playerMat = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
     const playerMesh = new THREE.Mesh(playerGeo, playerMat);
@@ -109,14 +100,11 @@
 
     let canJump = false;
     playerBody.addEventListener("collide", (e) => {
-      if (e.body.mass === 0) {  // static objects (ground, platforms)
+      if (e.body.mass === 0) {
         canJump = true;
       }
     });
 
-    // -------------------------------
-    // Initial Platforms & Procedural Generation Setup 
-    // -------------------------------
     const initialPlatforms = [
       { x: 0, y: 0.5, z: 0, w: 10, h: 1, d: 10, c: 0xAAAAAA },
       { x: 0, y: 2, z: -12, w: 4, h: 0.5, d: 4, c: 0x44aa44 },
@@ -127,9 +115,7 @@
     ];
     let highestPlatformY = 9;
 
-    function createPlatform(options) {
-      const { x, y, z, w, h, d, c } = options;
-      // Three.js mesh
+    function createPlatform({ x, y, z, w, h, d, c }) {
       const geo = new THREE.BoxGeometry(w, h, d);
       const mat = new THREE.MeshPhongMaterial({ color: c });
       const mesh = new THREE.Mesh(geo, mat);
@@ -137,7 +123,7 @@
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       scene.add(mesh);
-      // Cannon.js body (static)
+
       const shape = new CANNON.Box(new CANNON.Vec3(w/2, h/2, d/2));
       const body = new CANNON.Body({ mass: 0 });
       body.addShape(shape);
@@ -163,9 +149,6 @@
       return newHighest;
     }
 
-    // -------------------------------
-    // Camera-Relative Movement Input 
-    // -------------------------------
     const keys = { w: false, a: false, s: false, d: false };
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyW") keys.w = true;
@@ -176,17 +159,9 @@
         playerBody.velocity.y = 8;
         canJump = false;
       }
-      // Toggle first-person mode with the "V" key.
       if (e.code === "KeyV") {
         isFirstPerson = !isFirstPerson;
-        if (isFirstPerson) {
-          // Disable OrbitControls when in first-person mode.
-          controls.enabled = false;
-          console.log("First-person mode enabled");
-        } else {
-          controls.enabled = true;
-          console.log("Third-person mode enabled");
-        }
+        controls.enabled = !isFirstPerson;
       }
     });
     window.addEventListener("keyup", (e) => {
@@ -196,36 +171,24 @@
       if (e.code === "KeyD") keys.d = false;
     });
 
-    // -------------------------------
-    // First-Person Controls Setup
-    // -------------------------------
     let isFirstPerson = false;
     let fpYaw = 0, fpPitch = 0;
-    // When in first-person mode, use mouse movement to look around.
     window.addEventListener("mousemove", (e) => {
       if (!isFirstPerson) return;
       const sensitivity = 0.002;
-      fpYaw   -= e.movementX * sensitivity;
+      fpYaw -= e.movementX * sensitivity;
       fpPitch -= e.movementY * sensitivity;
-      // Clamp vertical look between -90 and +90 degrees.
       fpPitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, fpPitch));
     });
 
-    // -------------------------------
-    // Apply Movement (Camera-Relative)
-    // -------------------------------
     function applyPlayerMovement() {
       const force = 15;
       const direction = new THREE.Vector3();
       const right = new THREE.Vector3();
       const camDir = new THREE.Vector3();
-      
-      // Get the camera's forward vector (ignoring vertical).
       camera.getWorldDirection(camDir);
       camDir.y = 0;
       camDir.normalize();
-      
-      // Calculate the right vector.
       right.crossVectors(camDir, camera.up).normalize();
 
       if (keys.w) direction.add(camDir);
@@ -243,9 +206,6 @@
       }
     }
 
-    // -------------------------------
-    // Robust Animation Loop with Fixed Time Step 
-    // -------------------------------
     let lastTime = performance.now() / 1000;
     const fixedTimeStep = 1 / 60;
     let accumulator = 0;
@@ -262,26 +222,19 @@
         accumulator -= fixedTimeStep;
       }
 
-      // Process camera-relative movement.
       applyPlayerMovement();
-
-      // Sync player mesh to physics body.
       playerMesh.position.copy(playerBody.position);
       playerMesh.quaternion.copy(playerBody.quaternion);
 
       if (isFirstPerson) {
-        // First-person mode: position the camera at the player's head.
         const headOffset = new THREE.Vector3(0, 1.5, 0);
         camera.position.copy(playerMesh.position).add(headOffset);
-        // Apply first-person look rotation.
         camera.rotation.set(fpPitch, fpYaw, 0, "YXZ");
       } else {
-        // Third-person mode: update OrbitControls to follow the player.
         controls.target.copy(playerMesh.position);
         controls.update();
       }
 
-      // Procedurally generate new platforms if needed.
       if (playerMesh.position.y >= highestPlatformY) {
         highestPlatformY = generatePlatforms(6, highestPlatformY);
       }
